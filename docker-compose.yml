@@ -1,0 +1,63 @@
+# Self-hosted stack: PostgreSQL + API + web.
+# NOTE: authored but not yet verified — the development Mac has no Docker engine
+# (as of 2026-11-03). Verify with `docker compose up` on the target server.
+# Put SESSION_SECRET (and optional Stage-3 receipt-AI settings) in a local .env.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: billsplit
+      POSTGRES_USER: billsplit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U billsplit']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    environment:
+      PORT: '8787'
+      DATABASE_URL: postgres://billsplit:${POSTGRES_PASSWORD}@db:5432/billsplit
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      PROD: 'true'
+      # Stage 3 (receipt AI) — set when implemented:
+      # RECEIPT_AI_MODE: auto
+      # LOCAL_AI_BASE_URL: http://host.docker.internal:11234/v1  # must be reachable *from this container*
+      # LOCAL_AI_MODEL: ...
+      # LOCAL_AI_API_KEY: ...
+      # GEMINI_MODEL: ...
+      # GEMINI_API_KEY: ...
+      *** RECEIPT_AI_TIMEOUT_MS: '30000'
+    volumes:
+      - receipts:/data/receipts # private storage, outside any web root
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - '8787'
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8787/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      # Serve behind your HTTPS reverse proxy (Caddy/nginx/Traefik) in front of this port.
+      - '127.0.0.1:8090:80'
+    depends_on:
+      - server
+
+volumes:
+  pgdata:
+  receipts:
