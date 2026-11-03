@@ -184,14 +184,23 @@ export function enqueueExtraction(receiptId: string): void {
   })
 }
 
-/** Crash recovery: nothing should stay 'processing' after a restart. */
+/**
+ * Restart recovery. Extraction jobs are in-process callbacks, so a restart can
+ * strand receipts in 'processing' (job was mid-flight) *or* 'pending' (the job
+ * never started, e.g. the upload response was the last thing served). Reset
+ * interrupted rows to 'pending', then re-queue every pending row so nothing
+ * stays queued forever after a restart.
+ */
 export async function recoverStuckReceipts(): Promise<number> {
-  const { rowCount } = await pool.query(
-    `update receipt set status = 'failed', error_kind = 'internal',
-       processing_error = 'processing interrupted by server restart — retry'
+  await pool.query(
+    `update receipt set status = 'pending', error_kind = null,
+       processing_error = 'processing interrupted by server restart — automatically re-queued',
+       updated_at = now()
      where status = 'processing'`,
   )
-  return rowCount ?? 0
+  const { rows } = await pool.query(`select id from receipt where status = 'pending' order by created_at limit 500`)
+  for (const row of rows) enqueueExtraction(row.id as string)
+  return rows.length
 }
 
 /* ---------- Organizer settings (masked; plaintext keys never returned) ---------- */
@@ -243,6 +252,7 @@ export async function updateSettings(
      on conflict (organizer_id) do update set
        mode = coalesce(excluded.mode, organizer_ai_setting.mode),
        gemini_model = coalesce(excluded.gemini_model, organizer_ai_setting.gemini_model),
+       gemini_key_encrypted = coalesce(excluded.gemini_key_encrypted, organizer_ai_setting.gemini_key_encrypted),
        updated_at = now()`,
     [organizerId, patch.mode ?? null, patch.geminiModel ?? null, patch.geminiApiKey ? encryptSecret(patch.geminiApiKey) : null],
   )

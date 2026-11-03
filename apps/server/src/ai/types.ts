@@ -9,6 +9,8 @@ export type AiMode = 'auto' | 'local' | 'gemini' | 'tesseract'
 /** Runtime-validated extraction result. Missing fields are null, never guessed. */
 export interface Extraction {
   merchant: string | null
+  /** Suggested expense category (e.g. "Food") when inferable, else null. */
+  category: string | null
   /** ISO YYYY-MM-DD when confidently readable, else null. */
   date: string | null
   currency: string | null

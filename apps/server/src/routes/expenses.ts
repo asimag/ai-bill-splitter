@@ -29,6 +29,8 @@ const expenseSchema = z.object({
    * the tip is NOT already included in the amount. Parsed in exact minor units.
    */
   extraTip: z.string().trim().max(30).nullish(),
+  /** Optional record of how the bill was paid; advisory only, never affects splits. */
+  paymentMethod: z.enum(['cash', 'card', 'transfer', 'other']).nullish(),
 })
 
 /** Extra tip in minor units; empty or zero-ish input adds nothing. */
@@ -66,6 +68,7 @@ async function fetchExpense(expenseId: string) {
     category: (e.category as string | null) ?? null,
     amountMinor: Number(e.amount_minor as string),
     payerParticipantId: e.payer_participant_id as string,
+    paymentMethod: (e.payment_method as string | null) ?? null,
     receiptId: (e.receipt_id as string | null) ?? null,
     status: e.status as string,
     allocations: allocations.rows.map((a) => ({
@@ -134,8 +137,8 @@ router.post(
         body.participants.map((p) => ({ participantId: p.participantId, weight: p.weight })),
       )
       const { rows } = await client.query(
-        `insert into expense (trip_id, description, expense_date, category, amount_minor, payer_participant_id, receipt_id)
-         values ($1, $2, coalesce($3, current_date), $4, $5, $6, $7)
+        `insert into expense (trip_id, description, expense_date, category, amount_minor, payer_participant_id, receipt_id, payment_method)
+         values ($1, $2, coalesce($3, current_date), $4, $5, $6, $7, $8)
          returning id`,
         [
           trip.id,
@@ -145,6 +148,7 @@ router.post(
           totalMinor,
           body.payerParticipantId,
           body.receiptId ?? null,
+          body.paymentMethod ?? null,
         ],
       )
       const expenseId = rows[0].id as string
@@ -205,9 +209,9 @@ router.put(
       )
       await client.query(
         `update expense set description = $2, expense_date = coalesce($3, expense_date),
-           category = $4, amount_minor = $5, payer_participant_id = $6, updated_at = now()
+           category = $4, amount_minor = $5, payer_participant_id = $6, payment_method = $7, updated_at = now()
          where id = $1`,
-        [req.params.expenseId, body.description, body.date ?? null, body.category?.trim() || null, amountMinor, body.payerParticipantId],
+        [req.params.expenseId, body.description, body.date ?? null, body.category?.trim() || null, amountMinor, body.payerParticipantId, body.paymentMethod ?? null],
       )
       await client.query('delete from expense_allocation where expense_id = $1', [req.params.expenseId])
       for (const a of allocations) {

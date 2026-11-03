@@ -153,6 +153,20 @@ a.button:visited {
   display: inline-block;
 }
 
+/* Primary action on the trip screen: full-width so adding a bill is the
+   obvious next tap, with the expense list directly underneath. */
+a.big-add,
+a.big-add:visited {
+  display: block;
+  width: 100%;
+  padding: 16px 14px;
+  border-radius: 12px;
+  font-size: 1.06rem;
+  font-weight: 600;
+  text-align: center;
+  margin: 4px 0 14px;
+}
+
 button.link {
   background: none;
   border: none;
@@ -444,4 +458,37 @@ legend {
 
 .pos {
   color: var(--pos);
+}
+
+.neg {
+  color: var(--neg);
+}
+
+/* Plain-language "who owes what" summary above the detailed table. */
+.owe-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.owe-lines li {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.balance-details {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.balance-details summary {
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.expense-paid-by {
+  font-size: 0.9rem;
+  margin-top: 2px;
 }

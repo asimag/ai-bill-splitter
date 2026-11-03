@@ -4,6 +4,7 @@ import { Layout } from './components/Layout'
 import { AuthPage } from './pages/AuthPage'
 import { TripsPage } from './pages/TripsPage'
 import { TripPage } from './pages/TripPage'
+import { TripPeoplePage } from './pages/TripPeoplePage'
 import { AISettingsPage } from './pages/AISettingsPage'
 import { ExpenseFormPage } from './pages/ExpenseFormPage'
 import { QuickSplitPage } from './pages/QuickSplitPage'
@@ -24,6 +25,7 @@ export function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<TripsPage />} />
         <Route path="/trips/:tripId" element={<TripPage />} />
+        <Route path="/trips/:tripId/people" element={<TripPeoplePage />} />
         <Route path="/trips/:tripId/expenses/new" element={<ExpenseFormPage />} />
         <Route path="/trips/:tripId/expenses/:expenseId/edit" element={<ExpenseFormPage mode="edit" />} />
         <Route path="/quick" element={<QuickSplitPage />} />

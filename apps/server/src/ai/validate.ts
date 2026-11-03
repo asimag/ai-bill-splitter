@@ -11,6 +11,17 @@ import { ExtractionError, type Extraction } from './types.js'
 
 const AMOUNT_RE = /^\d+(\.\d{1,6})?$/
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+/** Free-text category, capped so one odd model answer cannot bloat the field. */
+const CATEGORY_MAX = 40
+/** Categories the expense form offers; a model answer outside them is kept as free text. */
+export const KNOWN_CATEGORIES = ['Food', 'Drinks', 'Groceries', 'Transport', 'Stay', 'Activities', 'Other']
+
+function normalizeCategory(value: unknown): string | null {
+  const s = normalizeText(value, CATEGORY_MAX)
+  if (!s) return null
+  const match = KNOWN_CATEGORIES.find((c) => c.toLowerCase() === s.toLowerCase())
+  return match ?? s
+}
 
 function normalizeAmount(value: unknown, field: string, warnings: string[]): string | null {
   if (value === null || value === undefined || value === '') return null
@@ -71,6 +82,7 @@ export function parseExtraction(raw: unknown): Extraction {
 
   const extraction: Extraction = {
     merchant: normalizeText(o.merchant, 120),
+    category: normalizeCategory(o.category),
     date: normalizeDate(o.date, warnings),
     currency,
     subtotal: normalizeAmount(o.subtotal, 'subtotal', warnings),

@@ -12,6 +12,7 @@ export interface ApplyFields {
   description?: string
   date?: string
   total?: string
+  category?: string
 }
 
 interface Props {
@@ -245,6 +246,10 @@ export function ReceiptCapture({ tripId, currency, receipt, onReceiptChange, onA
               <dd>{extraction.merchant ?? '—'}</dd>
             </div>
             <div>
+              <dt>Category</dt>
+              <dd>{extraction.category ?? '—'}</dd>
+            </div>
+            <div>
               <dt>Date</dt>
               <dd>{extraction.date ?? '—'}</dd>
             </div>
@@ -298,6 +303,7 @@ export function ReceiptCapture({ tripId, currency, receipt, onReceiptChange, onA
                   description: extraction.merchant ?? undefined,
                   date: extraction.date ?? undefined,
                   total: extraction.total ?? undefined,
+                  category: extraction.category ?? undefined,
                 })
                 setApplied(true)
               }}

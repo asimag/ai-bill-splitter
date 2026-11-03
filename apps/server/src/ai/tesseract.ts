@@ -56,6 +56,7 @@ export function parseTesseractText(text: string): Extraction {
   if (!total) warnings.push('final payable total not readable — confirm the amount manually')
   const extraction: Extraction = {
     merchant: null,
+    category: null,
     date: null,
     currency: null,
     subtotal: null,

@@ -37,13 +37,15 @@ export interface Expense {
   category: string | null
   amountMinor: number
   payerParticipantId: string
+  paymentMethod: string | null
   receiptId: string | null
   allocations: Allocation[]
 }
 
-/** Validated structured extraction; missing fields are null, never guessed. */
+/** Runtime-validated structured extraction; missing fields are null, never guessed. */
 export interface Extraction {
   merchant: string | null
+  category: string | null
   date: string | null
   currency: string | null
   subtotal: string | null

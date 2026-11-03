@@ -14,6 +14,7 @@ describe('parseExtraction', () => {
   it('accepts a full clean extraction', () => {
     const e = parseExtraction({
       merchant: 'Tandoor House',
+      category: 'food',
       date: '2026-11-01',
       currency: 'usd',
       subtotal: 48.0,
@@ -26,6 +27,7 @@ describe('parseExtraction', () => {
     })
     expect(e).toEqual({
       merchant: 'Tandoor House',
+      category: 'Food',
       date: '2026-11-01',
       currency: 'USD',
       subtotal: '48',
@@ -56,6 +58,13 @@ describe('parseExtraction', () => {
     const e = parseExtraction({ merchant: 'Cafe', subtotal: '10.00' })
     expect(e.total).toBeNull()
     expect(e.warnings.join(' ')).toMatch(/total/i)
+  })
+
+  it('normalizes category suggestions and keeps unfamiliar ones as free text', () => {
+    expect(parseExtraction({ total: '12.00', category: '  FOOD ' }).category).toBe('Food')
+    expect(parseExtraction({ total: '12.00', category: 'Petrol Station' }).category).toBe('Petrol Station')
+    expect(parseExtraction({ total: '12.00', category: 42 }).category).toBeNull()
+    expect(parseExtraction({ total: '12.00' }).category).toBeNull()
   })
 
   it('rejects non-object envelopes as invalid', () => {

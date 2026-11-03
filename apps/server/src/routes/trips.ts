@@ -124,6 +124,7 @@ router.get(
         category: (e.category as string | null) ?? null,
         amountMinor: toMinor(e.amount_minor),
         payerParticipantId: e.payer_participant_id as string,
+        paymentMethod: (e.payment_method as string | null) ?? null,
         receiptId: (e.receipt_id as string | null) ?? null,
         allocations: allocationsByExpense.get(e.id as string) ?? [],
       }))

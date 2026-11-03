@@ -4,6 +4,8 @@ import { formatMinor } from '@billsplit/core'
 import { api, ApiError, type Expense, type TransferSuggestion, type TripDetail } from '../api'
 import { money, todayISO } from '../format'
 
+const PAYMENT_LABEL: Record<string, string> = { cash: '💵 cash', card: '💳 card', transfer: '📲 transfer', other: '🧾 other' }
+
 export function TripPage() {
   const { tripId } = useParams<{ tripId: string }>()
   const navigate = useNavigate()
@@ -65,7 +67,7 @@ export function TripPage() {
   const { trip, participants, expenses, totals, balances } = detail
   const byId = new Map(participants.map((p) => [p.id, p]))
   const nameOf = (id: string) => byId.get(id)?.name ?? 'Unknown'
-  const active = participants.filter((p) => !p.archived)
+  const activeCount = participants.filter((p) => !p.archived).length
   const sortedBalances = [...balances].sort((a, b) => b.netMinor - a.netMinor)
   const settled = sortedBalances.every((b) => b.netMinor === 0)
   const unattachedReceipts = (detail.receipts ?? []).filter((r) => !r.expenseId)
@@ -76,8 +78,8 @@ export function TripPage() {
         <h2>
           {trip.name} <span className={`tag ${trip.status}`}>{trip.status}</span>
         </h2>
-        <Link className="primary button" to={`/trips/${trip.id}/expenses/new`}>
-          + Expense
+        <Link className="link" to={`/trips/${trip.id}/people`}>
+          👥 {activeCount} {activeCount === 1 ? 'person' : 'people'}
         </Link>
       </div>
       <p className="muted">
@@ -85,24 +87,127 @@ export function TripPage() {
       </p>
       {error && <p className="error">{error}</p>}
 
-      <section className="card">
-        <h3>People</h3>
-        {active.length === 0 && <p className="muted">Add the people sharing this trip.</p>}
-        <ul className="people">
-          {participants.map((p) => (
-            <li key={p.id}>
-              <ParticipantRow participant={p} currency={trip.currency} onChanged={load} />
-            </li>
-          ))}
-        </ul>
-        <AddParticipantForm tripId={trip.id} onAdded={load} />
+      {activeCount === 0 ? (
+        <Link className="big-add button" to={`/trips/${trip.id}/people`}>
+          👥 Add the people sharing this bill
+        </Link>
+      ) : (
+        <Link className="big-add button" to={`/trips/${trip.id}/expenses/new`}>
+          ＋ Add expense
+        </Link>
+      )}
+
+      <section>
+        <h3>Expenses</h3>
+        {unattachedReceipts.length > 0 && (
+          <div className="card">
+            <h4 style={{ margin: '0 0 6px' }}>Receipts awaiting review</h4>
+            <ul className="list-flat">
+              {unattachedReceipts.map((r) => (
+                <li key={r.id} className="row-between">
+                  <span>
+                    {r.merchant ?? 'Receipt'}{' '}
+                    {r.suggestedTotal ? (
+                      <strong>
+                        {r.suggestedTotal} {r.suggestedCurrency ?? trip.currency}
+                      </strong>
+                    ) : (
+                      ''
+                    )}
+                    <span className="muted small">
+                      {' '}
+                      · {r.status === 'extracted' ? 'scanned' : r.status}
+                      {r.providerUsed ? ` via ${r.providerUsed}` : ''}
+                      {r.errorKind ? ` (${r.errorKind})` : ''}
+                    </span>
+                  </span>
+                  <span className="row gap">
+                    {r.status === 'extracted' && (
+                      <Link className="link" to={`/trips/${trip.id}/expenses/new?receiptId=${r.id}`}>
+                        Review
+                      </Link>
+                    )}
+                    <button className="link danger" onClick={() => void discardReceipt(r.id)}>
+                      Discard
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="muted small">Scanned amounts only count after you review and save them as expenses.</p>
+          </div>
+        )}
+        {expenses.length === 0 ? (
+          <p className="muted">No expenses yet. Add the first bill above.</p>
+        ) : (
+          <ul className="list">
+            {expenses.map((x) => (
+              <li key={x.id} className="card">
+                <div className="row-between">
+                  <strong>{x.description}</strong>
+                  <span>{money(x.amountMinor, trip.currency)}</span>
+                </div>
+                <div className="expense-paid-by">
+                  Paid by <strong>{nameOf(x.payerParticipantId)}</strong>
+                  {x.paymentMethod ? ` ${PAYMENT_LABEL[x.paymentMethod] ?? x.paymentMethod}` : ''}
+                </div>
+                <div className="muted small">
+                  {x.date}
+                  {x.category ? ` · ${x.category}` : ''}
+                  {x.receiptId ? (
+                    <>
+                      {' · '}
+                      <a href={api.receiptImageUrl(x.receiptId)} target="_blank" rel="noreferrer">
+                        receipt 🧾
+                      </a>
+                    </>
+                  ) : null}
+                </div>
+                <ul className="shares">
+                  {x.allocations.map((a) => (
+                    <li key={a.participantId}>
+                      {nameOf(a.participantId)} · w{a.weight} · {money(a.amountMinor, trip.currency)}
+                    </li>
+                  ))}
+                </ul>
+                <div className="row gap">
+                  <Link className="link" to={`/trips/${trip.id}/expenses/${x.id}/edit`}>
+                    Edit
+                  </Link>
+                  <button className="link danger" onClick={() => void deleteExpense(x)}>
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="card">
-        <h3>Balances</h3>
+        <h3>Who owes what</h3>
         {settled ? (
           <p className="muted">Everyone is settled up.</p>
         ) : (
+          <ul className="owe-lines">
+            {sortedBalances.map((b) => (
+              <li key={b.participantId} className="row-between">
+                <span>{nameOf(b.participantId)}</span>
+                {b.netMinor === 0 ? (
+                  <span className="muted">settled ✓</span>
+                ) : b.netMinor > 0 ? (
+                  <span className="pos">gets back {money(b.netMinor, trip.currency)}</span>
+                ) : (
+                  <span className="neg">
+                    <strong>owes {money(-b.netMinor, trip.currency)}</strong>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <details className="balance-details">
+          <summary>Details (paid · share · repayments)</summary>
           <table className="balances">
             <thead>
               <tr>
@@ -134,10 +239,10 @@ export function TripPage() {
               ))}
             </tbody>
           </table>
-        )}
-        <p className="muted small">
-          Positive = receives back · negative = owes. Net includes recorded repayments (− paid out, + received).
-        </p>
+          <p className="muted small">
+            Net includes recorded repayments (− paid out, + received).
+          </p>
+        </details>
       </section>
 
       {detail.suggestions.length > 0 && (
@@ -209,88 +314,9 @@ export function TripPage() {
         />
       </section>
 
-      <section>
-        <h3>Expenses</h3>
-        {unattachedReceipts.length > 0 && (
-          <div className="card">
-            <h4 style={{ margin: '0 0 6px' }}>Receipts awaiting review</h4>
-            <ul className="list-flat">
-              {unattachedReceipts.map((r) => (
-                <li key={r.id} className="row-between">
-                  <span>
-                    {r.merchant ?? 'Receipt'}{' '}
-                    {r.suggestedTotal ? (
-                      <strong>
-                        {r.suggestedTotal} {r.suggestedCurrency ?? trip.currency}
-                      </strong>
-                    ) : (
-                      ''
-                    )}
-                    <span className="muted small">
-                      {' '}
-                      · {r.status === 'extracted' ? 'scanned' : r.status}
-                      {r.providerUsed ? ` via ${r.providerUsed}` : ''}
-                      {r.errorKind ? ` (${r.errorKind})` : ''}
-                    </span>
-                  </span>
-                  <span className="row gap">
-                    {r.status === 'extracted' && (
-                      <Link className="link" to={`/trips/${trip.id}/expenses/new?receiptId=${r.id}`}>
-                        Review
-                      </Link>
-                    )}
-                    <button className="link danger" onClick={() => void discardReceipt(r.id)}>
-                      Discard
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className="muted small">Scanned amounts only count after you review and save them as expenses.</p>
-          </div>
-        )}
-        {expenses.length === 0 ? (
-          <p className="muted">No expenses yet. Add the first bill.</p>
-        ) : (
-          <ul className="list">
-            {expenses.map((x) => (
-              <li key={x.id} className="card">
-                <div className="row-between">
-                  <strong>{x.description}</strong>
-                  <span>{money(x.amountMinor, trip.currency)}</span>
-                </div>
-                <div className="muted small">
-                  {x.date}
-                  {x.category ? ` · ${x.category}` : ''} · paid by {nameOf(x.payerParticipantId)}
-                  {x.receiptId ? (
-                    <>
-                      {' · '}
-                      <a href={api.receiptImageUrl(x.receiptId)} target="_blank" rel="noreferrer">
-                        receipt 🧾
-                      </a>
-                    </>
-                  ) : null}
-                </div>
-                <ul className="shares">
-                  {x.allocations.map((a) => (
-                    <li key={a.participantId}>
-                      {nameOf(a.participantId)} · w{a.weight} · {money(a.amountMinor, trip.currency)}
-                    </li>
-                  ))}
-                </ul>
-                <div className="row gap">
-                  <Link className="link" to={`/trips/${trip.id}/expenses/${x.id}/edit`}>
-                    Edit
-                  </Link>
-                  <button className="link danger" onClick={() => void deleteExpense(x)}>
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <Link className="link muted" to={`/trips/${trip.id}/people`}>
+        Manage people &amp; weights →
+      </Link>
       <button
         className="link muted"
         onClick={() => {
@@ -304,132 +330,6 @@ export function TripPage() {
       >
         Delete trip
       </button>
-    </div>
-  )
-}
-
-function AddParticipantForm({ tripId, onAdded }: { tripId: string; onAdded: () => void }) {
-  const [name, setName] = useState('')
-  const [weight, setWeight] = useState('1')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
-    try {
-      const w = Number.parseInt(weight, 10)
-      await api.post(`/trips/${tripId}/participants`, {
-        name: name.trim(),
-        weight: Number.isFinite(w) && w > 0 ? w : 1,
-      })
-      setName('')
-      setWeight('1')
-      onAdded()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'failed to add participant')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="row gap wrap add-person">
-      <input className="grow" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} />
-      <label className="weight-label">
-        Weight
-        <input className="weight-input" type="number" min={1} step={1} value={weight} onChange={(e) => setWeight(e.target.value)} />
-      </label>
-      <button type="submit" disabled={busy || !name.trim()}>
-        Add
-      </button>
-      {error && <p className="error">{error}</p>}
-    </form>
-  )
-}
-
-function ParticipantRow({
-  participant,
-  currency,
-  onChanged,
-}: {
-  participant: TripDetail['participants'][number]
-  currency: string
-  onChanged: () => void
-}) {
-  const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(participant.name)
-  const [weight, setWeight] = useState(String(participant.defaultWeight))
-  const [busy, setBusy] = useState(false)
-
-  async function save() {
-    setBusy(true)
-    try {
-      const w = Number.parseInt(weight, 10)
-      await api.patch(`/participants/${participant.id}`, {
-        name: name.trim() || undefined,
-        defaultWeight: Number.isFinite(w) && w > 0 ? w : undefined,
-      })
-      setEditing(false)
-      onChanged()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function archive() {
-    setBusy(true)
-    try {
-      await api.patch(`/participants/${participant.id}`, { archived: !participant.archived })
-      onChanged()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (editing) {
-    return (
-      <div className="row gap wrap">
-        <input className="grow" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
-        <label className="weight-label">
-          Weight
-          <input
-            className="weight-input"
-            type="number"
-            min={1}
-            step={1}
-            value={weight}
-            onChange={(e) => setWeight(e.target.value)}
-          />
-        </label>
-        <button onClick={() => void save()} disabled={busy}>
-          Save
-        </button>
-        <button className="link" onClick={() => setEditing(false)}>
-          Cancel
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className={`row-between ${participant.archived ? 'archived' : ''}`}>
-      <span>
-        {participant.name}{' '}
-        <span className="muted small">
-          weight {participant.defaultWeight}
-          {participant.archived ? ' · archived' : ''}
-        </span>
-      </span>
-      <span className="row gap">
-        <button className="link" onClick={() => setEditing(true)}>
-          Edit
-        </button>
-        <button className="link" onClick={() => void archive()} disabled={busy}>
-          {participant.archived ? 'Restore' : 'Archive'}
-        </button>
-      </span>
     </div>
   )
 }

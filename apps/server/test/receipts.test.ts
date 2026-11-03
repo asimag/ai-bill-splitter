@@ -27,12 +27,18 @@ process.env.LOCAL_AI_BASE_URL = 'http://local-ai.invalid.test/v1'
 process.env.LOCAL_AI_MODEL = 'fake-vl'
 process.env.GEMINI_API_KEY = 'env-gemini-key-123456'
 process.env.RECEIPT_AI_TIMEOUT_MS = '500'
+// The suite hammers auth/upload endpoints from one IP; keep real limits out of
+// the way (the limiter itself is unit-tested in rate-limit.test.ts).
+process.env.RATE_LIMIT_LOGIN_MAX = '100000'
+process.env.RATE_LIMIT_REGISTER_MAX = '100000'
+process.env.RATE_LIMIT_UPLOAD_MAX = '100000'
+process.env.RATE_LIMIT_AI_TEST_MAX = '100000'
 
 const { createApp } = await import('../src/app.js')
 const { migrate } = await import('../src/migrate.js')
 const { pool } = await import('../src/db.js')
 const { config } = await import('../src/config.js')
-const { setAdaptersForTesting } = await import('../src/ai/service.js')
+const { setAdaptersForTesting, resolveAiConfig, recoverStuckReceipts } = await import('../src/ai/service.js')
 type EffectiveAiConfig = import('../src/ai/service.js').EffectiveAiConfig
 const { ExtractionError } = await import('../src/ai/types.js')
 type Extraction = import('../src/ai/types.js').Extraction
@@ -53,6 +59,7 @@ let script: Script = { local: 'ok', gemini: 'ok' }
 
 const CLEAN_EXTRACTION: Extraction = {
   merchant: 'Tandoor House',
+  category: 'Food',
   date: '2026-11-01',
   currency: 'USD',
   subtotal: '48.00',
@@ -460,5 +467,75 @@ describe('AI settings surface', () => {
     expect(t.status).toBe(200)
     expect(t.data.ok).toBe(false)
     expect(['unavailable', 'timeout']).toContain(t.data.kind)
+  })
+
+  it('saves, replaces and removes the encrypted key even after other settings exist', async () => {
+    const jar = await register(`rc-keyswap-${Date.now()}@test.local`)
+    const organizer = (await req<any>(jar, 'GET', '/auth/me')).data.organizer.id
+
+    // Repro of the upsert bug: the row already exists from provider settings,
+    // then a key is saved — it must land, not be silently ignored.
+    expect((await req(jar, 'PUT', '/ai/settings', { mode: 'auto', geminiModel: 'gemini-3.8-flash' })).status).toBe(200)
+    expect((await req(jar, 'PUT', '/ai/settings', { geminiApiKey: 'first-organizer-key-11' })).status).toBe(200)
+    let cfg = await resolveAiConfig(organizer)
+    expect(cfg.gemini.keySource).toBe('saved')
+    expect(cfg.gemini.apiKey).toBe('first-organizer-key-11')
+
+    // Replacing an existing saved key must take effect, not retain the old one.
+    expect((await req(jar, 'PUT', '/ai/settings', { geminiApiKey: 'second-organizer-key-22' })).status).toBe(200)
+    cfg = await resolveAiConfig(organizer)
+    expect(cfg.gemini.keySource).toBe('saved')
+    expect(cfg.gemini.apiKey).toBe('second-organizer-key-22')
+
+    // Removing the saved key restores the environment default; the model
+    // override set alongside survives all of this key churn.
+    expect((await req(jar, 'PUT', '/ai/settings', { geminiApiKey: '' })).status).toBe(200)
+    cfg = await resolveAiConfig(organizer)
+    expect(cfg.gemini.keySource).toBe('environment')
+    expect(cfg.gemini.apiKey).toBe('env-gemini-key-123456')
+    expect(cfg.gemini.model).toBe('gemini-3.8-flash')
+    await req(jar, 'PUT', '/ai/settings', { geminiModel: null, mode: null })
+  })
+})
+
+describe('registration gate and restart recovery', () => {
+  it('refuses registration when the server closes sign-up', async () => {
+    const saved = config.allowRegistration
+    config.allowRegistration = false
+    try {
+      const res = await req({}, 'POST', '/auth/register', { email: `rc-gate-${Date.now()}@test.local`, password: 'password123' })
+      expect(res.status).toBe(403)
+      expect(res.data.error).toMatch(/registration is disabled/i)
+      // Login and existing sessions keep working while sign-up is closed.
+      expect((await req({}, 'POST', '/auth/login', { email: 'nobody@test.local', password: 'password123' })).status).toBe(401)
+    } finally {
+      config.allowRegistration = saved
+    }
+  })
+
+  it('re-queues interrupted AND never-started receipts on restart recovery', async () => {
+    const jar = await register(`rc-restart-${Date.now()}@test.local`)
+    const { tripId } = await newTripWithPeople(jar)
+
+    // Simulate the two ways a restart strands work: a receipt still 'pending'
+    // (its in-memory job died with the old process before starting) and one
+    // frozen 'processing' (the job was mid-flight).
+    const up1 = await uploadReceipt(jar, tripId)
+    const pendingId = up1.data.receipt!.id
+    const up2 = await uploadReceipt(jar, tripId)
+    const processingId = up2.data.receipt!.id
+    await waitForJob(jar, pendingId)
+    await waitForJob(jar, processingId)
+    await pool.query(`update receipt set status = 'pending' where id = $1`, [pendingId])
+    await pool.query(`update receipt set status = 'processing' where id = $1`, [processingId])
+
+    const requeued = await recoverStuckReceipts()
+    expect(requeued).toBeGreaterThanOrEqual(2)
+
+    // Both rows are picked up again and reach a terminal state on their own.
+    const done1 = await waitForJob(jar, pendingId)
+    const done2 = await waitForJob(jar, processingId)
+    expect(done1.status).toBe('extracted')
+    expect(done2.status).toBe('extracted')
   })
 })

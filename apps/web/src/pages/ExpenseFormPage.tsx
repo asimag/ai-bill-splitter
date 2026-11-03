@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, ApiError, type Receipt, type TripDetail } from '../api'
 import { allocate, formatMinor, parseAmountToMinor } from '@billsplit/core'
 import { money, todayISO } from '../format'
-import { ReceiptCapture } from './ReceiptCapture'
+import { ReceiptCapture, type ApplyFields } from './ReceiptCapture'
 
 const CATEGORIES = ['Food', 'Drinks', 'Groceries', 'Transport', 'Stay', 'Activities', 'Other']
+const PAYMENT_METHODS: { value: string; label: string }[] = [
+  { value: '', label: 'Not recorded' },
+  { value: 'cash', label: '💵 Cash' },
+  { value: 'card', label: '💳 Card' },
+  { value: 'transfer', label: '📲 Bank transfer' },
+  { value: 'other', label: 'Other' },
+]
 
 interface Row {
   participantId: string
@@ -23,6 +30,7 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
   const [date, setDate] = useState(todayISO())
   const [category, setCategory] = useState('')
   const [amount, setAmount] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState('')
   const [payerId, setPayerId] = useState('')
   const [rows, setRows] = useState<Row[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -30,6 +38,39 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
   const [searchParams] = useSearchParams()
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const [extraTip, setExtraTip] = useState('')
+  // Fields the organizer typed by hand — scan auto-fill never overwrites them.
+  const touched = useRef({ description: false, date: false, category: false, amount: false })
+  const autoAppliedFor = useRef<string | null>(null)
+  const [autoFillNote, setAutoFillNote] = useState<string | null>(null)
+
+  function applyFields(fields: ApplyFields, force: boolean) {
+    const t = touched.current
+    if (fields.description && !t.description) setDescription(fields.description)
+    if (fields.date && (force || !t.date)) setDate(fields.date)
+    if (fields.total && (force || !t.amount)) setAmount(fields.total)
+    if (fields.category && (force || !category)) setCategory(fields.category)
+  }
+
+  // Auto-fill total + category (and merchant/date) as soon as a scan lands,
+  // so hitting "Scan" leads straight to a mostly-filled form. Manual edits win.
+  useEffect(() => {
+    if (mode !== 'new') return
+    const ex = receipt?.status === 'extracted' ? receipt.extraction : null
+    if (!receipt || !ex || autoAppliedFor.current === receipt.id) return
+    autoAppliedFor.current = receipt.id
+    applyFields(
+      {
+        description: ex.merchant ?? undefined,
+        date: ex.date ?? undefined,
+        total: ex.total ?? undefined,
+        category: ex.category ?? undefined,
+      },
+      false,
+    )
+    const filled = [ex.total ? 'amount' : null, ex.category ? 'category' : null].filter(Boolean)
+    setAutoFillNote(filled.length ? `Auto-filled ${filled.join(' and ')} from the scan — edit anything you like.` : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receipt, mode])
 
   // Pick up a receipt carried over from a previous visit (?receiptId=...):
   // the scan may already be done, or still processing, when we arrive.
@@ -55,6 +96,7 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
           setDate(existing.date)
           setCategory(existing.category ?? '')
           setAmount(formatAmountInput(existing.amountMinor, d.trip.currency))
+          setPaymentMethod(existing.paymentMethod ?? '')
           setPayerId(existing.payerParticipantId)
           const snapshot = new Map(existing.allocations.map((a) => [a.participantId, a.weight]))
           setRows(
@@ -123,6 +165,7 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
       category: category.trim() || null,
       amount: amount.trim(),
       payerParticipantId: payerId,
+      paymentMethod: paymentMethod || null,
       participants: included.map((r) => ({
         participantId: r.participantId,
         weight: Number.parseInt(r.weight, 10),
@@ -161,28 +204,51 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
           currency={currency}
           receipt={receipt}
           onReceiptChange={setReceipt}
-          onApply={(fields) => {
-            if (fields.description && !description) setDescription(fields.description)
-            if (fields.date) setDate(fields.date)
-            if (fields.total) setAmount(fields.total)
-          }}
+          onApply={(fields) => applyFields(fields, true)}
         />
       )}
 
-      {noPeople && <p className="error">Add at least one person to the trip first.</p>}
+      {noPeople && <p className="error">Add at least one person to the trip first. <Link className="link" to={`/trips/${detail.trip.id}/people`}>Add people →</Link></p>}
+      {autoFillNote && <p className="muted small">✓ {autoFillNote}</p>}
       <form onSubmit={submit} className="card form">
         <label>
           Description
-          <input value={description} onChange={(e) => setDescription(e.target.value)} required maxLength={200} placeholder="Dinner at Tandoor" />
+          <input
+            value={description}
+            onChange={(e) => {
+              touched.current.description = true
+              setDescription(e.target.value)
+            }}
+            required
+            maxLength={200}
+            placeholder="Dinner at Tandoor"
+          />
         </label>
         <div className="form-row">
           <label>
             Amount ({currency})
-            <input value={amount} onChange={(e) => setAmount(e.target.value)} required inputMode="decimal" placeholder="60.00" />
+            <input
+              value={amount}
+              onChange={(e) => {
+                touched.current.amount = true
+                setAmount(e.target.value)
+              }}
+              required
+              inputMode="decimal"
+              placeholder="60.00"
+            />
           </label>
           <label>
             Date
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => {
+                touched.current.date = true
+                setDate(e.target.value)
+              }}
+              required
+            />
           </label>
         </div>
 
@@ -204,8 +270,17 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
           </label>
         )}
         <label>
-          Category
-          <input value={category} onChange={(e) => setCategory(e.target.value)} maxLength={40} list="category-suggestions" placeholder="Food" />
+          Category{mode === 'new' && receipt?.extraction?.category ? ' (suggested from scan — change if needed)' : ''}
+          <input
+            value={category}
+            onChange={(e) => {
+              touched.current.category = true
+              setCategory(e.target.value)
+            }}
+            maxLength={40}
+            list="category-suggestions"
+            placeholder="Food"
+          />
           <datalist id="category-suggestions">
             {CATEGORIES.map((c) => (
               <option key={c} value={c} />
@@ -221,6 +296,16 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
             {rows.map((r) => (
               <option key={r.participantId} value={r.participantId}>
                 {byId.get(r.participantId)?.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Paid with (optional)
+          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+            {PAYMENT_METHODS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
               </option>
             ))}
           </select>
