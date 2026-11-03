@@ -14,7 +14,7 @@ describe('money', () => {
     expect(parseAmountToMinor('12.34', 'USD')).toBe(1234)
     expect(parseAmountToMinor('0.05', 'USD')).toBe(5)
     expect(parseAmountToMinor('100', 'USD')).toBe(10000)
-    expect(parseAmountToMinor('100.', 'USD')).toBe(10000)
+    expect(() => parseAmountToMinor('100.', 'USD')).toThrow(RangeError) // no trailing dot
     expect(() => parseAmountToMinor('1,000', 'USD')).toThrow(RangeError) // no thousands separators
     expect(parseAmountToMinor('12', 'JPY')).toBe(12)
     expect(parseAmountToMinor('1.234', 'KWD')).toBe(1234)

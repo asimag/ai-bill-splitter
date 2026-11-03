@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { isSupportedCurrency } from '@billsplit/core'
+import { isSupportedCurrency, suggestTransfers } from '@billsplit/core'
 import { pool, transaction } from '../db.js'
 import { organizerId } from '../auth.js'
 import { badRequest, handler, notFound, requireOwnedTrip, toMinor } from '../http.js'
@@ -79,7 +79,7 @@ router.get(
     const trip = tripResult.rows[0]
     if (!trip) throw notFound('trip not found')
 
-    const [participantResult, expenseResult, allocationResult] = await Promise.all([
+    const [participantResult, expenseResult, allocationResult, repaymentResult, receiptResult] = await Promise.all([
       pool.query('select * from participant where trip_id = $1 order by position, created_at', [trip.id]),
       pool.query(`select * from expense where trip_id = $1 and status = 'confirmed' order by expense_date desc, created_at desc`, [trip.id]),
       pool.query(
@@ -87,6 +87,15 @@ router.get(
           join expense e on e.id = a.expense_id
          where e.trip_id = $1
          order by a.expense_id, a.position`,
+        [trip.id],
+      ),
+      pool.query('select * from repayment where trip_id = $1 order by repayment_date desc, created_at desc', [trip.id]),
+      pool.query(
+        `select r.id, r.status, r.provider_used, r.error_kind, r.extraction, e.id as expense_id
+           from receipt r
+           left join expense e on e.receipt_id = r.id
+          where r.trip_id = $1
+          order by r.created_at desc`,
         [trip.id],
       ),
     ])
@@ -115,12 +124,44 @@ router.get(
         category: (e.category as string | null) ?? null,
         amountMinor: toMinor(e.amount_minor),
         payerParticipantId: e.payer_participant_id as string,
+        receiptId: (e.receipt_id as string | null) ?? null,
         allocations: allocationsByExpense.get(e.id as string) ?? [],
       }))
 
-    // Net balance = paid - allocated share (repayments arrive in Stage 2).
+    // Light receipt summaries; full extraction/error detail comes from GET /receipts/:id.
+    const receipts = receiptResult.rows.map((r) => {
+      const extraction = r.extraction as { total?: string | null; currency?: string | null; merchant?: string | null } | null
+      return {
+        id: r.id as string,
+        status: r.status as string,
+        providerUsed: (r.provider_used as string | null) ?? null,
+        errorKind: (r.error_kind as string | null) ?? null,
+        suggestedTotal: extraction?.total ?? null,
+        suggestedCurrency: extraction?.currency ?? null,
+        merchant: extraction?.merchant ?? null,
+        expenseId: (r.expense_id as string | null) ?? null,
+      }
+    })
+
+    const repayments = repaymentResult.rows.map((r) => ({
+      id: r.id as string,
+      fromParticipantId: r.sender_participant_id as string,
+      toParticipantId: r.recipient_participant_id as string,
+      amountMinor: toMinor(r.amount_minor),
+      date: r.repayment_date as string,
+      note: (r.note as string | null) ?? null,
+      status: r.status as 'recorded' | 'reversed',
+      reversedAt: (r.reversed_at as Date | null)?.toISOString() ?? null,
+      createdAt: r.created_at,
+    }))
+
+    // Net balance = expenses paid - allocated shares
+    //               + repayments sent - repayments received.
+    // Only status = 'recorded' repayments count; reversed rows are history.
     const paid = new Map<string, number>()
     const share = new Map<string, number>()
+    const sent = new Map<string, number>()
+    const received = new Map<string, number>()
     let totalSpent = 0
     for (const e of expenses) {
       totalSpent += e.amountMinor
@@ -129,18 +170,37 @@ router.get(
         share.set(a.participantId, (share.get(a.participantId) ?? 0) + a.amountMinor)
       }
     }
+    for (const r of repayments) {
+      if (r.status !== 'recorded') continue
+      sent.set(r.fromParticipantId, (sent.get(r.fromParticipantId) ?? 0) + r.amountMinor)
+      received.set(r.toParticipantId, (received.get(r.toParticipantId) ?? 0) + r.amountMinor)
+    }
     const balances = participants.map((p) => {
       const paidMinor = paid.get(p.id) ?? 0
       const shareMinor = share.get(p.id) ?? 0
-      return { participantId: p.id, paidMinor, shareMinor, netMinor: paidMinor - shareMinor }
+      const repaidSentMinor = sent.get(p.id) ?? 0
+      const repaidReceivedMinor = received.get(p.id) ?? 0
+      return {
+        participantId: p.id,
+        paidMinor,
+        shareMinor,
+        repaidSentMinor,
+        repaidReceivedMinor,
+        netMinor: paidMinor - shareMinor + repaidSentMinor - repaidReceivedMinor,
+      }
     })
+    // Advice only: suggestions never change balances until recorded as repayments.
+    const suggestions = suggestTransfers(balances.map((b) => ({ participantId: b.participantId, netMinor: b.netMinor })))
 
     res.json({
       trip: tripJson(trip),
       participants,
       expenses,
+      repayments,
+      receipts,
       totals: { totalSpentMinor: totalSpent, expenseCount: expenses.length },
       balances,
+      suggestions,
     })
   }),
 )

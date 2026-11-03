@@ -26,15 +26,20 @@ services:
       PORT: '8787'
       DATABASE_URL: postgres://billsplit:${POSTGRES_PASSWORD}@db:5432/billsplit
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      CREDENTIALS_SECRET: ${CREDENTIALS_SECRET:?set CREDENTIALS_SECRET in .env (encrypts saved API keys)}
       PROD: 'true'
-      # Stage 3 (receipt AI) — set when implemented:
-      # RECEIPT_AI_MODE: auto
-      # LOCAL_AI_BASE_URL: http://host.docker.internal:11234/v1  # must be reachable *from this container*
-      # LOCAL_AI_MODEL: ...
-      # LOCAL_AI_API_KEY: ...
-      # GEMINI_MODEL: ...
-      # GEMINI_API_KEY: ...
-      *** RECEIPT_AI_TIMEOUT_MS: '30000'
+      # Stage 3 — receipt AI (see .env.example for docs):
+      RECEIPT_AI_MODE: ${RECEIPT_AI_MODE:-auto}
+      # LOCAL_AI_BASE_URL must be reachable *from this container* — e.g.
+      # http://host.docker.internal:11234/v1 for a vision server on the host,
+      # or a LAN IP. "localhost" here would mean this container.
+      LOCAL_AI_BASE_URL: ${LOCAL_AI_BASE_URL:-}
+      LOCAL_AI_MODEL: ${LOCAL_AI_MODEL:-}
+      LOCAL_AI_API_KEY: ${LOCAL_AI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      RECEIPT_AI_TIMEOUT_MS: ${RECEIPT_AI_TIMEOUT_MS:-30000}
+      RECEIPT_STORAGE_DIR: /data/receipts
     volumes:
       - receipts:/data/receipts # private storage, outside any web root
     depends_on:

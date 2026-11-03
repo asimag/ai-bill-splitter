@@ -14,7 +14,10 @@ multi-expense trips. Capture or enter expenses, track who paid, and settle up.
 
 ```bash
 npm install
-cp .env.example .env          # then set SESSION_SECRET: openssl rand -hex 32
+cp .env.example .env          # then set SESSION_SECRET and CREDENTIALS_SECRET: openssl rand -hex 32 (each)
+# Optional receipt AI (Stage 3): point LOCAL_AI_* at a vision-capable OpenAI-compatible
+# server reachable from the backend; set GEMINI_API_KEY for cloud fallback (or leave
+# RECEIPT_AI_MODE=local to keep receipts on-prem).
 # PostgreSQL: any reachable server; default dev URL is postgres://asim@localhost:5433/billsplit_dev
 npm run migrate
 npm run dev                   # API on :8787, web on :5173 (proxies /api)
@@ -43,6 +46,9 @@ Migrations run automatically when the API container starts.
 
 ## Status
 
-Stage 1 (auth, trips, participants, allocation engine, quick split, manual
-expenses, running balances) — see [TASKS.md](TASKS.md). Receipts/AI, offline
-drafts, exports, and PWA packaging come in Stages 2–5.
+Stages 1–3 implemented: auth, trips, participants, allocation engine, quick
+split, manual expenses, running balances, settlement suggestions, repayments,
+private receipt capture with local/Gemini vision extraction (auto fallback), and
+secure provider settings — see [TASKS.md](TASKS.md) for what is verified and
+what remains. Offline drafts, PWA packaging, exports, and deployment polish
+come in Stages 4–5.

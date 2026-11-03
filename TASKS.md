@@ -2,69 +2,12 @@
 
 ## Active
 
-- [ ] **Stage 2 — Suggest settlement transfers**
-  - Match participants who owe money with those who should receive it.
-  - Positive net balance means money to receive; negative means money owed.
-  - Suggestions alone must not change balances; do not claim a globally minimal transfer count.
-
-- [ ] **Stage 2 — Record and reverse repayments**
-  - Store sender, recipient, amount, and date separately from expenses.
-  - Compute net = expenses paid - allocated shares + repayments sent - repayments received.
-  - Support corrections/reversals and show repayment history without double-counting transfers.
-
-- [ ] **Stage 2 — Verify financial rules with focused automated tests**
-  - A 6,000 bill with weights 1:2:1 gives shares of 1,500 / 3,000 / 1,500.
-  - For bills totalling 9,000 at weights 1:2:1, with Ali paying 6,000 and Sara 3,000: shares are 2,250 / 4,500 / 2,250; Ali receives 3,750, Sara owes 1,500, and Ahmed owes 2,250.
-  - Excluded participants receive zero allocation; changing defaults preserves existing allocations.
-  - A 100-minor-unit bill divided equally three ways allocates 34 / 33 / 33 in stable participant order.
-  - Expense edits/deletions, repayment recording/reversal, invalid input, and currency precision behave correctly.
-  - Every allocation sums to its expense total, and trip net balances sum to zero.
-
-- [ ] **Stage 3 — Capture and privately store receipts**
-  - Support mobile camera capture and image upload with preview, rotation, and retaking.
-  - Validate file content/type and size; keep files outside public web roots on a persistent volume.
-  - Authorize receipt retrieval and associate each receipt with its expense and organizer.
-
-- [ ] **Stage 3 — Add switchable receipt AI providers**
-  - Define a shared extraction interface and validated structured result for totals, currency, identifiable charges, merchant/date, and uncertainty.
-  - Prefer the user's local image-capable AI via a configurable OpenAI-compatible adapter; keep endpoint, model, and optional key on the backend.
-  - Add a Gemini Flash adapter with configurable model ID; verify supported image input at implementation time.
-  - Tesseract becomes an optional adapter rather than the required primary provider.
-  - Process extraction outside the main request path, with visible pending, failure, and retry states.
-  - Suggest the final payable total, distinguishing subtotal, tax, service, tip, and cash tendered.
-  - Require confirmation/correction before an expense enters financial totals.
-  - Preserve manual fallback and editable drafts; never invent missing amounts.
-  - Add optional extra tip only when it is not already included in the confirmed total.
-  - Keep all weighted splitting and settlement calculations in exact application code, independent of AI responses.
-
-- [ ] **Stage 3 — Automatically fall back from local AI to Gemini Flash**
-  - Default to auto mode: local first, Gemini when local is unconfigured, unavailable, timed out, image-incompatible, or returns invalid extraction data.
-  - Use bounded attempts and timeouts; avoid loops and duplicate expenses on retries/fallback.
-  - Provide explicit local-only and Gemini-only modes; local-only must never send receipts to the cloud.
-  - Show the provider used and sanitized fallback reason; try local again on later requests when available.
-  - Preserve drafts and manual entry if both providers fail; distinguish rate limits/quota from credential errors.
-
-- [ ] **Stage 3 — Add provider settings and secure API-key entry**
-  - Support backend `RECEIPT_AI_MODE`, `LOCAL_AI_BASE_URL`, `LOCAL_AI_MODEL`, optional `LOCAL_AI_API_KEY`, `GEMINI_MODEL`, `GEMINI_API_KEY`, and a configurable bounded request timeout.
-  - Document container-to-local-server connectivity; keep infrastructure endpoint changes restricted to the server operator.
-  - When a needed cloud key is missing/invalid, show an authenticated provider/key prompt in the app, preserve the receipt, and retry after configuration.
-  - Allow supported-provider selection, model/mode changes, connection testing, masked configured status, and credential replacement/removal.
-  - Use environment credentials as defaults; explicitly saved organizer keys override only for that organizer, with removal restoring defaults.
-  - Submit keys over HTTPS and encrypt saved credentials on the server with a separate server-only encryption secret.
-  - Never expose keys in frontend bundles, browser persistence/caches, logs, exports, repository files, or API read responses; clear key input after submission.
-
-- [ ] **Stage 3 — Verify provider switching, fallback, and key isolation**
-  - Mock local success, local outage/timeout, unsupported image input, malformed extraction, Gemini success/failure, and local recovery.
-  - Verify missing/revoked keys prompt for configuration; rate limits/quota produce useful errors without retry loops.
-  - Verify local-only never calls Gemini, Gemini-only bypasses local, and fallback/retries cannot duplicate expenses.
-  - Verify organizer-specific key precedence, environment defaults, masked responses, and authorization for provider settings.
-  - Confirm identical allocation results regardless of extraction provider after user confirmation.
-
 - [ ] **Stage 3 — Evaluate receipts and device capture**
   - Test representative real restaurant receipts, including blurry/skewed images and varied layouts.
   - Check included tax/service charges, subtotal versus total, and unreadable amounts.
   - Report observed extraction accuracy and failure cases; use synthetic fixtures for automated tests.
   - Verify receipt access isolation and document actual iPhone/Android camera checks.
+  - *Status 2026-11-03: access isolation and the full pipeline are verified (automated + live curl, `scripts/e2e-stage3.sh`); one synthetic rendered receipt extracted perfectly by the local model (all fields incl. total-vs-cash-tendered). Still needed: a pass over real photographed receipts and iPhone/Android camera confirmation with the app installed or in a mobile browser.*
 
 - [ ] **Stage 4 — Make the app installable**
   - Add a web app manifest, icons, service worker, HTTPS-compatible setup, and home-screen guidance.
@@ -116,6 +59,16 @@
 - [ ] **Add payment-provider integration** - keep the first release focused on tracking and recording repayments.
 
 ## Done
+
+- [x] ~~Stage 3 — Capture and privately store receipts: camera/gallery capture with client-side preview, 90° rotation (canvas re-encode) and retake; content-sniffed JPEG/PNG/WebP validation + size limit (multer memory, magic bytes); files under a private dir per organizer, never statically served, streamed only through authorized `GET /receipts/:id/image` (`private, no-store`); receipts tied to trip+organizer, attachable to exactly one expense (unique `expense.receipt_id`); unattached receipts visible on the trip page for review/discarded~~ (2026-11-03) — Live curl round-trip: upload → byte-identical streaming → confirm → isolation 404s for other organizers. Caveat: capture/rotate/retake UI passed typecheck + production build but has not had a real-device (iPhone/Android) browser pass.
+- [x] ~~Stage 3 — Switchable receipt AI providers: one `ReceiptAiAdapter` interface with runtime-validated `Extraction` (merchant/date/currency/subtotal/tax/service/tip/cash-tendered/total as decimal strings + warnings; missing fields null, ambiguous dates/amounts dropped, never guessed); OpenAI-compatible local adapter (endpoint/model/key on backend env); Gemini Flash adapter with configurable model ID (default `gemini-3.6-flash`, verified stable + image-capable 2026-11-03 against ai.google.dev docs); Tesseract demoted to an optional explicit-mode-only heuristic adapter; extraction runs off the request path (row-claimed background job, pending/processing/extracted/failed + retry); prompt demands the FINAL payable total with included charges never added twice, confirmed against the real local model; expenses are only created when the organizer submits the (pre-filled, fully editable) form — extraction alone never touches totals; optional `extraTip` added in exact minor-unit arithmetic only when not already included; all allocation stays in `@billsplit/core`~~ (2026-11-03) — Live round-trip on the local MLX vision model extracted every field of a synthetic receipt correctly (34.00 + 1.70 tax + 3.40 service + 2.90 tip → total 42.00, cash tendered 50.00 not confused with total). Caveat: Gemini adapter has no automated test against the real API (no key configured); Tesseract binary not installed on the dev machine (parser unit-tested only).
+- [x] ~~Stage 3 — Automatic local→Gemini fallback: auto mode tries local first, falls back on unconfigured/unreachable/timeout/image-incompatible/invalid output with one bounded attempt per provider and `RECEIPT_AI_TIMEOUT_MS` (AbortSignal); local-only mode makes zero cloud calls, gemini-only bypasses local; provider used + sanitized single-line fallback trace stored on each receipt; auto retries local again on every later job once it recovers; missing Gemini key → receipt kept, `error_kind=credentials` with an in-app link to settings; rate_limit vs credentials kinds distinguished; job row-claim + unique expense.receipt_id make retry/fallback unable to duplicate expenses~~ (2026-11-03) — Mocked-adapter integration tests for all paths + live outage drill (local endpoint down → failed receipt preserved with trace "local: failed (unavailable)…; gemini: skipped (credentials) no Gemini API key configured"). Caveat: successful real Gemini fallback not exercised (no key configured).
+- [x] ~~Stage 3 — Provider settings and secure API-key entry: backend env `RECEIPT_AI_MODE`/`LOCAL_AI_BASE_URL`/`LOCAL_AI_MODEL`/`LOCAL_AI_API_KEY`/`GEMINI_MODEL`/`GEMINI_API_KEY`/`RECEIPT_AI_TIMEOUT_MS` (+ `CREDENTIALS_SECRET`, `RECEIPT_STORAGE_DIR`, `RECEIPT_MAX_BYTES`); local endpoint/model operator-only (env), documented container-reachability caveat in compose + settings page; authenticated Settings page: mode select, Gemini model, key paste → encrypted at rest (AES-256-GCM, separate server-only secret), masked status (`saved`/`environment`/`none`), test-connection per provider, key replace/remove restoring environment defaults; plaintext keys never returned by any read API and input fields cleared after submit~~ (2026-11-03) — Tests: masked GET never contains key material (asserted on serialized JSON), saved-key precedence per organizer with removal restoring defaults, other organizer sees no saved key; live settings check shows no secrets. Caveat: HTTPS is a deployment concern (compose serves behind a reverse proxy); key entry itself verified at API level, not in a browser.
+- [x] ~~Stage 3 — Verify provider switching, fallback, and key isolation: 12 integration tests (real app + real PostgreSQL `billsplit_test_s3`) plus 12 extraction-boundary unit tests over local success, local outage→Gemini with recorded reason, local-only never calls Gemini, Gemini-only bypass, local recovery on later uploads, missing-key credentials prompt → save key → retry succeeds, rate_limit/image kinds distinguishable, duplicate confirm/retry cannot create a second expense, identical extraction → identical allocations, extra tip exactness (52.80+2.20=5500 minor), upload validation (400 fake bytes/413 oversize), receipt/image/retry/delete 404 for foreign organizers, encrypted-key round trip + tamper refusal, envelope/amount/date validation, HTTP error classification, redaction of key-shaped strings~~ (2026-11-03) — `npm test` green: 17 core + 12 AI-unit + 9 Stage-2 + 12 Stage-3 tests (45 total); provider-independent allocation equality asserted end-to-end after confirmation.
+
+- [x] ~~Stage 2 — Suggest settlement transfers: greedy largest-debtor/creditor matching in `@billsplit/core` (`suggestTransfers`), returned as `suggestions` on trip detail; deterministic, ≤ n−1 transfers, explicitly not claimed minimal; suggestions are advice only and verified not to change balances~~ (2026-11-03)
+- [x] ~~Stage 2 — Record and reverse repayments: `repayment` table (sender, recipient, amount, date, note) stored separately from expenses; net = paid − shares + sent − received counting only `recorded` rows; corrections via PUT, reversal flips status and keeps the row as visible history (restore re-counts exactly once); repayments allowed for archived participants and on closed trips (Stage 5 prerequisite)~~ (2026-11-03) — Live curl round-trip (record → balances shift → reverse → restore → correct) verified against the dev server.
+- [x] ~~Stage 2 — Focused automated financial tests: 17 core unit tests (allocation examples, rounding, zero-sum, suggestions) plus 9 new API integration tests (`apps/server/test`) running the real Express app against a real PostgreSQL test DB — 9,000-at-1:2:1 example end-to-end, 34/33/33 stable order, exclusion + weight snapshots, edit/delete recalculation, repayment record/reverse/restore/correct without double-counting, validation, JOD/JPY precision, organizer isolation, allocation sums == expense totals, zero-sum nets~~ (2026-11-03) — `npm test` green; caught and fixed one real bug (amount parser accepted a trailing dot). Caveat: new trip-page UI (suggestions card, repayment form/history) passed typecheck + production build but has not had a visual browser pass yet.
 
 - [x] ~~Stage 1 — Initialize the application: React/TS/Vite web, Node/TS API, PostgreSQL, Docker Compose, dev commands, `.env.example`, migrations, mobile layout; commands recorded in AGENTS.md~~ (2026-11-03) — Caveat: Docker Compose config is committed but not yet run; the dev Mac has no Docker engine.
 - [x] ~~Stage 1 — Organizer authentication and ownership: register/login/logout, session cookie, ownership enforced server-side on every trip/participant/expense operation~~ (2026-11-03) — Verified with cross-organizer isolation checks (404s) and 401 without a session.

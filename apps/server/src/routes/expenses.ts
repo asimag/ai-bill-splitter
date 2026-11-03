@@ -22,7 +22,25 @@ const expenseSchema = z.object({
     .array(z.object({ participantId: z.string().uuid(), weight: z.number().int().positive() }))
     .min(1, 'at least one included participant is required')
     .max(200),
+  /** Optional extraction-backed receipt this confirmed expense was built from. */
+  receiptId: z.string().uuid().nullish(),
+  /**
+   * Optional extra tip added ON TOP of the confirmed total — only used when
+   * the tip is NOT already included in the amount. Parsed in exact minor units.
+   */
+  extraTip: z.string().trim().max(30).nullish(),
 })
+
+/** Extra tip in minor units; empty or zero-ish input adds nothing. */
+function parseExtraTipMinor(value: string | null | undefined, currency: string): number {
+  const s = value?.trim()
+  if (!s || /^0+(?:\.0+)?$/.test(s)) return 0
+  try {
+    return parseAmountToMinor(s, currency)
+  } catch {
+    throw badRequest('extra tip must be a positive amount in the trip currency')
+  }
+}
 
 async function loadTripParticipants(client: PoolClient, tripId: string) {
   const { rows } = await client.query(
@@ -48,6 +66,7 @@ async function fetchExpense(expenseId: string) {
     category: (e.category as string | null) ?? null,
     amountMinor: Number(e.amount_minor as string),
     payerParticipantId: e.payer_participant_id as string,
+    receiptId: (e.receipt_id as string | null) ?? null,
     status: e.status as string,
     allocations: allocations.rows.map((a) => ({
       participantId: a.participant_id as string,
@@ -90,16 +109,43 @@ router.post(
         const p = participants.get(id)!
         if (p.archived) throw badRequest(`cannot use archived participant ${p.name as string}`)
       }
+      // Exact integer math: confirmed total + optional extra tip (only when the
+      // tip is not already included in the amount the organizer confirmed).
       const amountMinor = parseAmountToMinor(body.amount, String(trip.currency).trim())
+      const tipMinor = parseExtraTipMinor(body.extraTip, String(trip.currency).trim())
+      const totalMinor = amountMinor + tipMinor
+      if (!Number.isSafeInteger(totalMinor)) throw badRequest('amount plus tip is too large')
+
+      // Attaching a receipt is the confirmation step: the extraction only
+      // enters financial totals through this confirmed expense row.
+      if (body.receiptId) {
+        const rec = await client.query(
+          `select status from receipt where id = $1 and trip_id = $2 for update`,
+          [body.receiptId, trip.id],
+        )
+        const receipt = rec.rows[0] as { status: string } | undefined
+        if (!receipt) throw badRequest('receipt not found in this trip')
+        if (receipt.status !== 'extracted')
+          throw new HttpError(409, `receipt is not ready to attach (status: ${receipt.status})`)
+      }
+
       const allocations = allocate(
-        amountMinor,
+        totalMinor,
         body.participants.map((p) => ({ participantId: p.participantId, weight: p.weight })),
       )
       const { rows } = await client.query(
-        `insert into expense (trip_id, description, expense_date, category, amount_minor, payer_participant_id)
-         values ($1, $2, coalesce($3, current_date), $4, $5, $6)
+        `insert into expense (trip_id, description, expense_date, category, amount_minor, payer_participant_id, receipt_id)
+         values ($1, $2, coalesce($3, current_date), $4, $5, $6, $7)
          returning id`,
-        [trip.id, body.description, body.date ?? null, body.category?.trim() || null, amountMinor, body.payerParticipantId],
+        [
+          trip.id,
+          body.description,
+          body.date ?? null,
+          body.category?.trim() || null,
+          totalMinor,
+          body.payerParticipantId,
+          body.receiptId ?? null,
+        ],
       )
       const expenseId = rows[0].id as string
       for (const a of allocations) {
@@ -108,6 +154,15 @@ router.post(
            values ($1, $2, $3, $4, $5)`,
           [expenseId, a.participantId, a.weight, a.amountMinor, a.position],
         )
+      }
+      if (body.receiptId) {
+        // Row lock + status guard: a retried confirmation can never attach twice
+        // (the unique expense.receipt_id index is the backstop).
+        const upd = await client.query(
+          `update receipt set status = 'confirmed', updated_at = now() where id = $1 and status = 'extracted'`,
+          [body.receiptId],
+        )
+        if (!upd.rowCount) throw new HttpError(409, 'receipt was already used or is not ready to attach')
       }
       return expenseId
     })

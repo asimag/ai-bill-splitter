@@ -65,7 +65,7 @@ export function isSupportedCurrency(currency: string): boolean {
  */
 export function parseAmountToMinor(amount: string, currency: string): number {
   const precision = currencyPrecision(currency)
-  const match = /^(\d+)(?:\.(\d*))?$/.exec(amount.trim())
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(amount.trim())
   if (!match) throw new RangeError(`invalid amount: ${amount}`)
   const [, whole = '0', fraction = ''] = match
   if (fraction.length > precision) {

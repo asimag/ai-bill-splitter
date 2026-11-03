@@ -19,6 +19,7 @@ export function Layout() {
           Trips
         </NavLink>
         <NavLink to="/quick">Quick split</NavLink>
+        <NavLink to="/settings/ai">Settings</NavLink>
       </nav>
     </div>
   )

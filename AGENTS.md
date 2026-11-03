@@ -4,7 +4,7 @@
 
 Build a self-hosted, mobile-first PWA for weighted restaurant bill splitting and multi-expense trips. Users capture receipts, confirm amounts, track who paid, and settle balances.
 
-The Stage 1 application is implemented and verified locally (2026-11-03): organizer auth, trips, participants, the allocation engine, quick split, manual expenses, and running balances. Stages 2-5 remain. See [TASKS.md](TASKS.md).
+The Stage 1 application is implemented and verified locally (2026-11-03), Stage 2 (settlement suggestions, repayments with corrections/reversals, and automated API/integration tests) is implemented and verified locally (2026-11-03), and Stage 3 (private receipt capture/storage, switchable local/Gemini vision extraction with automatic fallback, secure in-app key settings, mocked + live verification) is implemented and verified locally (2026-11-03). Remaining: the Stage 3 real-receipt/real-device evaluation pass, then Stages 4-5. See [TASKS.md](TASKS.md).
 
 Use [TASKS.md](TASKS.md) as the implementation checklist. Work in stage order, update completed items with dates, and report what was verified. Do not mark an entire stage complete when acceptance checks remain outstanding.
 
@@ -13,7 +13,7 @@ Use [TASKS.md](TASKS.md) as the implementation checklist. Work in stage order, u
 npm-workspaces monorepo (Node ≥ 22):
 
 - `packages/core` — `@billsplit/core`: exact-integer money parsing/formatting and the allocation engine. Shared by API and browser; tests in `packages/core/test` cover the AGENTS.md money examples (vitest).
-- `apps/server` — `@billsplit/server`: Express + `pg` API (TypeScript run with `tsx`, no build step). SQL migrations in `apps/server/migrations` (applied by `npm run migrate` and automatically at server startup). Env loaded from repo-root `.env`.
+- `apps/server` — `@billsplit/server`: Express + `pg` API (TypeScript run with `tsx`, no build step; multipart receipt uploads via `multer`, in memory + content sniffing). SQL migrations in `apps/server/migrations` (applied by `npm run migrate` and automatically at server startup). Env loaded from repo-root `.env`. Stage 3 layout: `src/ai/` (adapter interface `types.ts`, output validation `validate.ts`, error sanitizing/classification `errors.ts`, shared extraction prompt `prompt.ts`, adapters `local.ts`/`gemini.ts`/`tesseract.ts`, orchestrator + settings `service.ts`), `src/storage.ts` (private file storage + magic-byte sniffing), `src/crypto.ts` (AES-256-GCM key encryption), `src/routes/receipts.ts`, `src/routes/ai.ts`. Receipt files live under `receipts-storage/` at the repo root by default (`RECEIPT_STORAGE_DIR`; mounted at `/data/receipts` in Docker) — gitignored, never statically served. Stage-3 integration tests use their own DB `billsplit_test_s3` (parallel-safe with Stage 2's `billsplit_test`).
 - `apps/web` — `@billsplit/web`: Vite + React + react-router mobile-first UI; dev server proxies `/api` to :8787.
 - `docker-compose.yml` + per-app Dockerfiles — Postgres + API + nginx-served web. **Not yet run**: the dev Mac has no Docker engine; verify `docker compose up` on the target server.
 
@@ -21,12 +21,19 @@ Commands (run from the repo root):
 
 ```bash
 npm install                        # once
-cp .env.example .env               # set SESSION_SECRET: openssl rand -hex 32
+cp .env.example .env               # set SESSION_SECRET and CREDENTIALS_SECRET: openssl rand -hex 32 (each)
 npm run migrate                    # apply pending SQL migrations
 npm run dev                        # API :8787 + web :5173 together (also `npm run dev -w @billsplit/server|web` separately)
-npm test                           # workspace tests (11 engine tests as of Stage 1)
+npm test                           # workspace tests: 17 core engine tests + 33 server tests (12 AI/extraction
+                                   #  unit, 9 Stage-2 API integration, 12 Stage-3 receipt/AI integration)
+                                   #  (integration tests need the local Postgres on :5433 and auto-create
+                                   #  billsplit_test and billsplit_test_s3; override with TEST_DATABASE_URL
+                                   #  / TEST_DATABASE_URL_STAGE3)
 npm run typecheck                  # tsc --noEmit in all workspaces
 npm run build -w @billsplit/web    # production web bundle -> apps/web/dist
+bash scripts/e2e-stage3.sh [png]   # live Stage-3 smoke test against a running dev API: register -> trip ->
+                                   #  upload receipt -> poll real-model extraction -> confirm expense (+tip)
+                                   #  -> balances -> duplicate-attach 409 -> foreign-organizer 404s -> masked settings
 ```
 
 Local dev database: PostgreSQL 18.4 (DBngin binaries at `/Users/Shared/DBngin/postgresql/18.4_arm/bin`), cluster at `~/pgdata/bill-splitter-dev`, port 5433. Start if down:
@@ -35,7 +42,9 @@ Local dev database: PostgreSQL 18.4 (DBngin binaries at `/Users/Shared/DBngin/po
 /Users/Shared/DBngin/postgresql/18.4_arm/bin/pg_ctl -D ~/pgdata/bill-splitter-dev -o "-p 5433" -l ~/pgdata/bill-splitter-dev/server.log start
 ```
 
-Stage 1 API behavior was verified with a 35-assertion curl script (auth, ownership/isolation, allocation examples, rounding, weight snapshots, archive, currency precision, cascade deletes). No automated API/integration tests exist yet; the Stage 2 test task covers them.
+Stage 1 API behavior was verified with a 35-assertion curl script (auth, ownership/isolation, allocation examples, rounding, weight snapshots, archive, currency precision, cascade deletes). Stage 2 added automated API integration tests in `apps/server/test/api.test.ts` (vitest + real Express app + real PostgreSQL `billsplit_test` DB, created automatically): financial examples end-to-end, repayment record/reverse/restore/correct without double-counting, suggestions, validation, precision, and organizer isolation. Express app construction lives in `apps/server/src/app.ts` (`createApp()`) so tests can mount it without binding a port.
+
+Stage 3 was verified two ways: (1) automated — `apps/server/test/receipts.test.ts` runs the real app against `billsplit_test_s3` with mocked adapters (`setAdaptersForTesting`) covering the full fallback matrix, confirmation idempotency, upload validation, receipt authorization/isolation, and masked/encrypted key handling; `apps/server/test/ai.test.ts` covers the extraction boundary (envelope/amount/date validation, error classification/sanitizing, AES-GCM round-trip, Tesseract heuristic). (2) live — `scripts/e2e-stage3.sh` against the dev server with the real local vision model (`.env`: `LOCAL_AI_BASE_URL=http://127.0.0.1:11234/v1`, model `ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-4.7bpw`, key from env): a synthetic rendered restaurant receipt extracted perfectly (merchant/date/USD/subtotal 34.00/tax 1.70/service 3.40/tip 2.90/total 42.00/cash 50.00 — included charges never re-added), then confirm+tip produced exact 45.00 → 2250/2250 allocations with zero-sum balances, duplicate attach refused 409, foreign organizer got 404s, and settings responses contained no key material. A live outage drill (local endpoint down, no Gemini key) preserved the receipt with a sanitized trace and actionable credentials error. Not yet done: real photographed receipts, real Gemini API call, iPhone/Android camera checks, and a browser visual pass of the new UI.
 
 ## Technology and scope
 
@@ -100,7 +109,7 @@ Final schema names may follow the chosen project conventions. Preserve these rel
 - Treat receipt text and model output as untrusted data, not instructions or executable content.
 - Implement an OpenAI-compatible image-input adapter for the local server, without requiring an OpenAI account or cloud key. Keep other local protocols replaceable through the adapter boundary.
 - Configure the local base URL, model ID, and optional API key on the backend. The endpoint must be reachable from the deployed backend/container, not merely from the user's phone; localhost inside Docker refers to that container.
-- Configure `RECEIPT_AI_MODE=auto|local|gemini`, `LOCAL_AI_BASE_URL`, `LOCAL_AI_MODEL`, optional `LOCAL_AI_API_KEY`, `GEMINI_MODEL`, `GEMINI_API_KEY`, and a bounded request timeout. These are planned configuration names, not implemented settings.
+- Implemented settings (2026-11-03): `RECEIPT_AI_MODE=auto|local|gemini|tesseract`, `LOCAL_AI_BASE_URL`, `LOCAL_AI_MODEL`, optional `LOCAL_AI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.6-flash` — verified stable + image-capable 2026-11-03; `gemini-2.5-flash` is deprecated/shutting down), `GEMINI_API_KEY`, `RECEIPT_AI_TIMEOUT_MS`, plus `CREDENTIALS_SECRET` (encrypts saved organizer keys), `RECEIPT_STORAGE_DIR`, and `RECEIPT_MAX_BYTES`.
 - Default to auto mode: try local first; if missing, unreachable, timed out, image-incompatible, or returning unusable/invalid structured data after a bounded attempt, automatically try Gemini Flash when configured. Record a sanitized fallback reason. Do not add an approval dialog before this user-authorized fallback.
 - In local-only mode, keep processing local and show retry/manual entry on failure. In Gemini-only mode, use Gemini directly. Never silently send to a third provider.
 - Keep the Gemini Flash model ID configurable and verify a currently supported image-capable Flash model when implementing. Do not hardcode a model version into business logic.

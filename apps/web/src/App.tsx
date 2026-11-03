@@ -4,6 +4,7 @@ import { Layout } from './components/Layout'
 import { AuthPage } from './pages/AuthPage'
 import { TripsPage } from './pages/TripsPage'
 import { TripPage } from './pages/TripPage'
+import { AISettingsPage } from './pages/AISettingsPage'
 import { ExpenseFormPage } from './pages/ExpenseFormPage'
 import { QuickSplitPage } from './pages/QuickSplitPage'
 
@@ -26,6 +27,7 @@ export function App() {
         <Route path="/trips/:tripId/expenses/new" element={<ExpenseFormPage />} />
         <Route path="/trips/:tripId/expenses/:expenseId/edit" element={<ExpenseFormPage mode="edit" />} />
         <Route path="/quick" element={<QuickSplitPage />} />
+        <Route path="/settings/ai" element={<AISettingsPage />} />
         <Route path="/login" element={<Navigate to="/" replace />} />
         <Route path="/register" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />

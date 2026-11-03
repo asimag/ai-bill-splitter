@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { api, ApiError, type TripDetail } from '../api'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { api, ApiError, type Receipt, type TripDetail } from '../api'
 import { allocate, formatMinor, parseAmountToMinor } from '@billsplit/core'
 import { money, todayISO } from '../format'
+import { ReceiptCapture } from './ReceiptCapture'
 
 const CATEGORIES = ['Food', 'Drinks', 'Groceries', 'Transport', 'Stay', 'Activities', 'Other']
 
@@ -26,6 +27,20 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
   const [rows, setRows] = useState<Row[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [searchParams] = useSearchParams()
+  const [receipt, setReceipt] = useState<Receipt | null>(null)
+  const [extraTip, setExtraTip] = useState('')
+
+  // Pick up a receipt carried over from a previous visit (?receiptId=...):
+  // the scan may already be done, or still processing, when we arrive.
+  useEffect(() => {
+    const id = searchParams.get('receiptId')
+    if (mode !== 'new' || !id) return
+    api
+      .get<{ receipt: Receipt }>(`/receipts/${id}`)
+      .then(({ receipt: r }) => setReceipt(r))
+      .catch(() => setError('that receipt could not be loaded'))
+  }, [mode, searchParams])
 
   useEffect(() => {
     if (!tripId) return
@@ -61,10 +76,22 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
   const currency = detail?.trip.currency ?? 'USD'
 
   const included = rows.filter((r) => r.included)
-  const preview = useMemo(() => {
-    if (!amount) return null
+
+  /** Extra tip counts only when a receipt is attached and the tip is not zero. */
+  const tipMinor = useMemo(() => {
+    const s = extraTip.trim()
+    if (mode !== 'new' || !receipt || !s || /^0+(?:\.0+)?$/.test(s)) return 0
     try {
-      const total = parseAmountToMinor(amount, currency)
+      return parseAmountToMinor(s, currency)
+    } catch {
+      return null // invalid tip input: previews stay hidden until it parses
+    }
+  }, [extraTip, mode, receipt, currency])
+
+  const preview = useMemo(() => {
+    if (!amount || tipMinor === null) return null
+    try {
+      const total = parseAmountToMinor(amount, currency) + tipMinor
       const parts = included.map((r) => ({
         participantId: r.participantId,
         weight: Number.parseInt(r.weight, 10) || 0,
@@ -74,14 +101,23 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
     } catch {
       return null
     }
-  }, [amount, currency, included])
+  }, [amount, currency, included, tipMinor])
+
+  const chargedMinor = useMemo(() => {
+    if (!amount || tipMinor === null) return null
+    try {
+      return parseAmountToMinor(amount, currency) + tipMinor
+    } catch {
+      return null
+    }
+  }, [amount, currency, tipMinor])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!tripId) return
     setBusy(true)
     setError(null)
-    const body = {
+    const body: Record<string, unknown> = {
       description: description.trim(),
       date,
       category: category.trim() || null,
@@ -91,6 +127,13 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
         participantId: r.participantId,
         weight: Number.parseInt(r.weight, 10),
       })),
+    }
+    // Submitting the form IS the confirmation step: attach the scanned receipt
+    // and any extra tip that is not already included in the amount.
+    if (mode === 'new' && receipt) {
+      body.receiptId = receipt.id
+      const tip = extraTip.trim()
+      if (tip && !/^0+(?:\.0+)?$/.test(tip)) body.extraTip = tip
     }
     try {
       if (mode === 'edit' && expenseId) await api.put(`/expenses/${expenseId}`, body)
@@ -111,6 +154,21 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
     <div>
       <h2>{mode === 'edit' ? 'Edit expense' : 'New expense'}</h2>
       <p className="muted">{detail.trip.name} · amounts in {currency}</p>
+
+      {mode === 'new' && detail.trip.status === 'open' && (
+        <ReceiptCapture
+          tripId={detail.trip.id}
+          currency={currency}
+          receipt={receipt}
+          onReceiptChange={setReceipt}
+          onApply={(fields) => {
+            if (fields.description && !description) setDescription(fields.description)
+            if (fields.date) setDate(fields.date)
+            if (fields.total) setAmount(fields.total)
+          }}
+        />
+      )}
+
       {noPeople && <p className="error">Add at least one person to the trip first.</p>}
       <form onSubmit={submit} className="card form">
         <label>
@@ -127,6 +185,24 @@ export function ExpenseFormPage({ mode = 'new' }: { mode?: 'new' | 'edit' }) {
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
           </label>
         </div>
+
+        {mode === 'new' && receipt?.extraction && (
+          <label>
+            Extra tip ({currency}) — only if NOT already included above
+            <input
+              value={extraTip}
+              onChange={(e) => setExtraTip(e.target.value)}
+              inputMode="decimal"
+              placeholder="0.00"
+              maxLength={30}
+            />
+            {tipMinor ? (
+              <span className="muted small">
+                {chargedMinor !== null ? `Charged total: ${money(chargedMinor, currency)}` : 'Check the tip amount'}
+              </span>
+            ) : null}
+          </label>
+        )}
         <label>
           Category
           <input value={category} onChange={(e) => setCategory(e.target.value)} maxLength={40} list="category-suggestions" placeholder="Food" />
