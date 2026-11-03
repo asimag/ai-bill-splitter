@@ -6,9 +6,11 @@ import { ExtractionError, type ReceiptAiAdapter, type ReceiptImage } from './typ
 /**
  * Gemini Flash adapter (image input). The model ID is always configuration,
  * never hardcoded in business logic. Default verified 2026-11-03:
- * gemini-3.6-flash — stable Flash with image input (2.5-flash is deprecated).
+ * gemini-3.8-flash — current stable Flash with image input, verified against
+ * a live key's model list + image generateContent call 2026-11-03
+ * (gemini-3.6-flash also served; 2.5-flash is deprecated).
  */
-export const GEMINI_DEFAULT_MODEL = 'gemini-3.6-flash'
+export const GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash'
 
 export interface GeminiConfig {
   model: string

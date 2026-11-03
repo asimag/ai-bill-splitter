@@ -9,6 +9,7 @@ import { pool, transaction } from '../db.js'
 import { badRequest, handler, HttpError, notFound, requireOwnedTrip, toMinor } from '../http.js'
 import { deleteReceiptFile, detectImageType, readReceiptBytes, saveReceiptBytes } from '../storage.js'
 import { enqueueExtraction } from '../ai/service.js'
+import { receiptRetryLimiter, receiptUploadLimiter } from '../rate-limit.js'
 
 const router = Router()
 
@@ -47,6 +48,7 @@ function uploadImage(req: Request, res: Response, next: NextFunction): void {
 
 router.post(
   '/trips/:tripId/receipts',
+  receiptUploadLimiter.handler,
   uploadImage,
   handler(async (req, res) => {
     const organizer = organizerId(req)
@@ -117,6 +119,7 @@ const retrySchema = z.object({})
 /** Re-queue a failed (or extracted-for-review) receipt. Idempotent by row claim. */
 router.post(
   '/receipts/:receiptId/retry',
+  receiptRetryLimiter.handler,
   handler(async (req, res) => {
     retrySchema.parse(req.body ?? {})
     const row = await requireOwnedReceipt(req.params.receiptId!, organizerId(req))

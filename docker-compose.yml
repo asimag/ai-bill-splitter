@@ -6,6 +6,7 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: billsplit
       POSTGRES_USER: billsplit
@@ -22,12 +23,17 @@ services:
     build:
       context: .
       dockerfile: apps/server/Dockerfile
+    restart: unless-stopped # survive restarts/crashes; queued receipt jobs are re-queued on boot
     environment:
       PORT: '8787'
       DATABASE_URL: postgres://billsplit:${POSTGRES_PASSWORD}@db:5432/billsplit
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       CREDENTIALS_SECRET: ${CREDENTIALS_SECRET:?set CREDENTIALS_SECRET in .env (encrypts saved API keys)}
       PROD: 'true'
+      # Registration is closed by default: open it (ALLOW_REGISTRATION=true),
+      # create the organizer accounts, then close it again so strangers cannot
+      # consume this server's receipt-AI quota.
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       # Stage 3 — receipt AI (see .env.example for docs):
       RECEIPT_AI_MODE: ${RECEIPT_AI_MODE:-auto}
       # LOCAL_AI_BASE_URL must be reachable *from this container* — e.g.
@@ -36,7 +42,7 @@ services:
       LOCAL_AI_BASE_URL: ${LOCAL_AI_BASE_URL:-}
       LOCAL_AI_MODEL: ${LOCAL_AI_MODEL:-}
       LOCAL_AI_API_KEY: ${LOCAL_AI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       RECEIPT_AI_TIMEOUT_MS: ${RECEIPT_AI_TIMEOUT_MS:-30000}
       RECEIPT_STORAGE_DIR: /data/receipts
@@ -57,6 +63,7 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
     ports:
       # Serve behind your HTTPS reverse proxy (Caddy/nginx/Traefik) in front of this port.
       - '127.0.0.1:8090:80'

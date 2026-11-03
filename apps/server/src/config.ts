@@ -22,10 +22,9 @@ export const config = {
   localAiBaseUrl: process.env.LOCAL_AI_BASE_URL?.trim() ?? '',
   localAiModel: process.env.LOCAL_AI_MODEL?.trim() ?? '',
   localAiApiKey: process.env.LOCAL_AI_API_KEY?.trim() ?? '',
-  // Verified 2026-11-03 against ai.google.dev/gemini-api/docs/models:
-  // gemini-3.6-flash is the current stable Flash with image input; 2.5-flash
-  // is deprecated and shuts down for new users. Model stays configurable.
-  geminiModel: process.env.GEMINI_MODEL?.trim() ?? 'gemini-3.6-flash',
+  // Verified 2026-11-03 against a live key's model list + image generateContent
+  // call: gemini-3.8-flash is the current stable Flash with image input.
+  geminiModel: process.env.GEMINI_MODEL?.trim() ?? 'gemini-3.8-flash',
   geminiApiKey: process.env.GEMINI_API_KEY?.trim() ?? '',
   receiptAiTimeoutMs: Number(process.env.RECEIPT_AI_TIMEOUT_MS ?? 30_000),
 
@@ -36,6 +35,17 @@ export const config = {
   receiptStorageDir:
     process.env.RECEIPT_STORAGE_DIR ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'receipts-storage'),
   receiptMaxBytes: Number(process.env.RECEIPT_MAX_BYTES ?? 10 * 1024 * 1024),
+
+  // Access control. Public registration lets anyone consume the server's AI
+  // quota, so deployments default to closed (register, then set false).
+  allowRegistration: (process.env.ALLOW_REGISTRATION ?? 'true').trim().toLowerCase() !== 'false',
+  rateLimit: {
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 15 * 60_000),
+    loginMax: Number(process.env.RATE_LIMIT_LOGIN_MAX ?? 20),
+    registerMax: Number(process.env.RATE_LIMIT_REGISTER_MAX ?? 5),
+    uploadMax: Number(process.env.RATE_LIMIT_UPLOAD_MAX ?? 30),
+    aiTestMax: Number(process.env.RATE_LIMIT_AI_TEST_MAX ?? 10),
+  },
 }
 
 if (config.prod && config.sessionSecret === 'dev-insecure-secret-change-me') {

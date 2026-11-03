@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import { type RequestHandler, Router } from 'express'
 import { z } from 'zod'
 import { pool, transaction } from '../db.js'
 import {
@@ -12,6 +12,8 @@ import {
   verifyPassword,
 } from '../auth.js'
 import { badRequest, handler, HttpError, unauthorized } from '../http.js'
+import { config } from '../config.js'
+import { loginLimiter, registerLimiter } from '../rate-limit.js'
 
 const router = Router()
 
@@ -24,8 +26,20 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
+/**
+ * Registration is closed by default on deployments (ALLOW_REGISTRATION):
+ * open sign-up hands the server's receipt-AI quota (e.g. the Gemini key) to
+ * anyone. The operator opens it just long enough to create organizer accounts.
+ */
+const registrationGate: RequestHandler = (_req, _res, next) => {
+  if (!config.allowRegistration) return next(new HttpError(403, 'registration is disabled on this server'))
+  next()
+}
+
 router.post(
   '/register',
+  registrationGate,
+  registerLimiter.handler,
   handler(async (req, res) => {
     const { email, password } = credentialsSchema.parse(req.body)
     const normalized = normalizeEmail(email)
@@ -46,6 +60,7 @@ router.post(
 
 router.post(
   '/login',
+  loginLimiter.handler,
   handler(async (req, res) => {
     const parsed = credentialsSchema.safeParse(req.body)
     if (!parsed.success) throw unauthorized('invalid email or password')

@@ -13,7 +13,7 @@ if (applied.length) console.log(`migrations applied: ${applied.join(', ')}`)
 
 await ensureStorageDir()
 const stuck = await recoverStuckReceipts()
-if (stuck) console.log(`receipts recovered after restart: ${stuck}`)
+if (stuck) console.log(`receipt extraction jobs re-queued after restart: ${stuck}`)
 
 app.listen(config.port, () => {
   console.log(`bill-splitter API listening on http://localhost:${config.port}`)

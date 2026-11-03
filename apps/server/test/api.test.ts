@@ -15,6 +15,10 @@ const TEST_DATABASE_URL =
 // Must be set before the app modules load config.
 process.env.DATABASE_URL = TEST_DATABASE_URL
 process.env.SESSION_SECRET = 'integration-test-secret'
+// This suite registers/logs in heavily from one IP; keep rate limits out of
+// the way (the limiter itself is unit-tested in rate-limit.test.ts).
+process.env.RATE_LIMIT_LOGIN_MAX = '100000'
+process.env.RATE_LIMIT_REGISTER_MAX = '100000'
 
 const { createApp } = await import('../src/app.js')
 const { migrate } = await import('../src/migrate.js')
